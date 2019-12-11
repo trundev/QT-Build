@@ -1,0 +1,30 @@
+name: Build QT
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      QTVER: 5.11.2
+      vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
+
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        repository: qt/qt5
+        ref: v${{ env.QTVER }}
+        submodules: true
+
+    - name: Configure QT
+      run: |
+        echo "Prepare VS2019 environment..."
+        $tempfile = [IO.Path]::GetTempFileName()
+        $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
+        if ($proc.ExitCode) {exit $proc.ExitCode}
+        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
+        del $tempfile
+
+        echo "" "Run QT configure..."
+        .\configure.bat -prefix $PWD\qtbase -nomake examples -nomake tests -opensource -confirm-licenseecho
