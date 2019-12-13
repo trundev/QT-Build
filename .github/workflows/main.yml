@@ -1,4 +1,4 @@
-name: Build QT
+name: Configure QT
 
 on: [push]
 
@@ -9,13 +9,19 @@ jobs:
     env:
       QTVER: 5.11.2
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
+      UPLOAD_FILTER: "Makefile*"
 
     steps:
     - uses: actions/checkout@v1
       with:
         repository: qt/qt5
         ref: v${{ env.QTVER }}
-        submodules: true
+        #submodules: true
+        path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
+
+    - name: Checkout qtbase
+      run: |
+        git submodule update --init qtbase
 
     - name: Configure QT
       run: |
@@ -26,5 +32,17 @@ jobs:
         get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
         del $tempfile
 
-        echo "" "Run QT configure..."
-        .\configure.bat -prefix $PWD\qtbase -nomake examples -nomake tests -opensource -confirm-licenseecho
+        $deploy_dir = mkdir -Force "$PWD\..\QT\$env:QTVER"
+        echo "" "Run QT configure to $deploy_dir..."
+        .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
+
+    - name: Prepare for upload
+      run: |
+        echo "Recursively copy all $env:UPLOAD_FILTER to ..\Result"
+        Get-ChildItem -recurse -include "$env:UPLOAD_FILTER" | resolve-path -relative | ForEach-Object {copy $_ $(mkdir -force $(Join-Path ..\Result $(split-path $_)))}
+
+    - uses: actions/upload-artifact@v1
+      with:
+        name: QT-Makefiles
+        path: ../Result
+
