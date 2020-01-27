@@ -7,14 +7,14 @@ jobs:
     runs-on: windows-latest
 
     env:
-      QTVER: 5.11.2
+      QTVER: v5.11.2  # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
 
     steps:
     - uses: actions/checkout@v1
       with:
         repository: qt/qt5
-        ref: v${{ env.QTVER }}
+        ref: ${{ env.QTVER }}
         #submodules: true
         path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
 
@@ -31,7 +31,7 @@ jobs:
         get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
         del $tempfile
 
-        $deploy_dir = mkdir -Force "$PWD\..\QT\$env:QTVER"
+        $deploy_dir = mkdir -Force "$PWD\..\QT"
         echo "" "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
@@ -59,8 +59,31 @@ jobs:
         echo "" "Run nmake install..."
         nmake install
 
-    - uses: actions/upload-artifact@v1
-      with:
-        name: QT-deploy
-        path: ../QT
+    - name: ZIP Result
+      run: |
+        Add-Type -assembly "system.io.compression.filesystem"
+        [io.compression.zipfile]::CreateFromDirectory("$PWD\..\QT", "$PWD\QT-${{ env.QTVER }}.zip")
 
+        Get-Item QT-${{ env.QTVER }}.zip
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1.0.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Build ${{ env.QTVER }}
+        draft: true
+        prerelease: false
+
+    - name: Upload Release Asset
+      id: upload-release-asset 
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above
+        asset_path: ./QT-${{ env.QTVER }}.zip
+        asset_name: QT-${{ env.QTVER }}.zip
+        asset_content_type: application/zip
