@@ -7,7 +7,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      QTVER: dev  # Change this to the QT version to build
+      QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
 
     steps:
@@ -20,14 +20,24 @@ jobs:
 
     - name: Update QTVER
       run: |
+        echo "::set-env name=QTVER-ORIG::${{ env.QTVER }}"
         echo "::set-env name=QTVER::$(git describe)"
 
-    - name: Prepare VS2019 environment
+    - name: Prepare MSVS environment
       run: |
         $tempfile = [IO.Path]::GetTempFileName()
         $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
         if ($proc.ExitCode) {exit $proc.ExitCode}
-        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); echo "::set-env name=$n::$v"}
+        get-content $tempfile | foreach-object {
+          $s = $_.Split("=",2)
+          if ($s.Length -eq 2) {
+            $n,$v = $s
+            # Export new variables only
+            if (-not $(Test-Path env:$n) -or $v -ne $(Get-Item env:$n).Value) {
+              echo "::set-env name=$n::$v"
+            }
+          }
+        }
         del $tempfile
 
     - name: Configure QT
