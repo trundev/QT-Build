@@ -7,7 +7,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      QTVER: v5.11.2
+      QTVER: dev  # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
 
     steps:
@@ -18,32 +18,36 @@ jobs:
         submodules: true
         path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
 
-    - name: Configure QT
+    - name: Update QTVER
       run: |
-        echo "Prepare VS2019 environment..."
+        echo "::set-env name=QTVER::$(git describe)"
+
+    - name: Prepare VS2019 environment
+      run: |
         $tempfile = [IO.Path]::GetTempFileName()
         $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
         if ($proc.ExitCode) {exit $proc.ExitCode}
-        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
+        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); echo "::set-env name=$n::$v"}
         del $tempfile
 
+    - name: Configure QT
+      run: |
         $deploy_dir = mkdir -Force "$PWD\..\QT"
-        echo "" "Run QT configure to $deploy_dir..."
+        echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
     - name: Runner test commands
       id: test_commands
       run: |
-        echo "git describe"
-        git describe
+        echo "PS env:QTVER=$env:QTVER"
+        echo "Runner env.QTVER=${{ env.QTVER }}"
         echo "Environment Variables"
         Get-Item env:
         echo "::log-command parameter1=test-log-parameter1,parameter2=test-log-parameter2::test-log-command value"
         echo "::set-output name=test_out_var::test_out_var-value"
         echo "::set-env name=test_env_var::test_env_var-value"
-        echo "::add-path::c:\test-add-somepath"
 
-    - name: Browse state
+    - name: Browse state ${{ env.QTVER }}
       run: |
         echo "Output variable from previous step"
         echo "test_var: ${{ steps.test_commands.outputs.test_out_var }}"
