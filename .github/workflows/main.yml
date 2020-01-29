@@ -9,6 +9,8 @@ jobs:
     env:
       QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
+      QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
+      #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
 
     steps:
     - uses: actions/checkout@v1
@@ -28,7 +30,7 @@ jobs:
         $tempfile = [IO.Path]::GetTempFileName()
         $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
         if ($proc.ExitCode) {exit $proc.ExitCode}
-        get-content $tempfile | foreach-object {
+        Get-Content $tempfile | foreach-object {
           $s = $_.Split("=",2)
           if ($s.Length -eq 2) {
             $n,$v = $s
@@ -44,7 +46,14 @@ jobs:
       run: |
         $deploy_dir = mkdir -Force "$PWD\..\QT"
         echo "Run QT configure to $deploy_dir..."
-        .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
+        $proc = .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
+        if ($LastExitCode) {exit $LastExitCode}
+
+        if ( Test-Path ${{ env.QT_CONF }} ) {
+          Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
+            if ($n -eq "TargetSpec") { echo "::set-env name=QT_BUILD_TYPE::$v"; break }
+          }
+        }
 
     - name: Runner test commands
       id: test_commands
@@ -57,10 +66,22 @@ jobs:
         echo "::set-output name=test_out_var::test_out_var-value"
         echo "::set-env name=test_env_var::test_env_var-value"
 
-    - name: Browse state ${{ env.QTVER }}
+    - name: Browse state
       run: |
         echo "Output variable from previous step"
         echo "test_var: ${{ steps.test_commands.outputs.test_out_var }}"
         echo ""
         echo "Environment Variables"
         Get-Item env:
+
+    - name: Create Release ${{ env.QTVER }}
+      id: create_release
+      uses: actions/create-release@v1.0.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.QTVER }}  # ${{ github.ref }}
+        release_name: ${{ env.QTVER }}
+        body: Build of qt/qt5 repository, ref ${{ env.QTVER-ORIG }}, byuild type ${{ env.QT_BUILD_TYPE }}
+        draft: true
+        prerelease: false
