@@ -7,8 +7,10 @@ jobs:
     runs-on: windows-latest
 
     env:
-      QTVER: v5.11.2  # Change this to the QT version to build
+      QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
+      QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
+      #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
 
     steps:
     - uses: actions/checkout@v1
@@ -18,45 +20,53 @@ jobs:
         #submodules: true
         path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
 
+    - name: Update QTVER
+      run: |
+        echo "::set-env name=QTVER-ORIG::${{ env.QTVER }}"
+        echo "::set-env name=QTVER::$(git describe)"
+
     - name: Checkout qtbase
       run: |
         git submodule update --init qtbase
 
-    - name: Configure QT
+    - name: Prepare MSVS environment
       run: |
-        echo "Prepare VS2019 environment..."
         $tempfile = [IO.Path]::GetTempFileName()
         $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
         if ($proc.ExitCode) {exit $proc.ExitCode}
-        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
+        Get-Content $tempfile | foreach-object {
+          $s = $_.Split("=",2)
+          if ($s.Length -eq 2) {
+            $n,$v = $s
+            # Export new variables only
+            if (-not $(Test-Path env:$n) -or $v -ne $(Get-Item env:$n).Value) {
+              echo "::set-env name=$n::$v"
+            }
+          }
+        }
         del $tempfile
 
+    - name: Configure QT
+      run: |
         $deploy_dir = mkdir -Force "$PWD\..\QT"
-        echo "" "Run QT configure to $deploy_dir..."
+        echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
+        if ($LastExitCode) {exit $LastExitCode}
+
+        if ( Test-Path ${{ env.QT_CONF }} ) {
+          Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
+            if ($n -eq "TargetSpec") { echo "::set-env name=QT_BUILD_TYPE::$v"; break }
+          }
+        }
 
     - name: Make QT
       run: |
-        echo "Prepare VS2019 environment..."
-        $tempfile = [IO.Path]::GetTempFileName()
-        $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
-        if ($proc.ExitCode) {exit $proc.ExitCode}
-        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
-        del $tempfile
-
-        echo "" "Run nmake..."
+        echo "Run nmake..."
         nmake
 
     - name: Install QT
       run: |
-        echo "Prepare VS2019 environment..."
-        $tempfile = [IO.Path]::GetTempFileName()
-        $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
-        if ($proc.ExitCode) {exit $proc.ExitCode}
-        get-content $tempfile | foreach-object {$n,$v = $_.Split("=",2); set-item -path "env:\$($n)" -value $v}
-        del $tempfile
-
-        echo "" "Run nmake install..."
+        echo "Run nmake install..."
         nmake install
 
     - name: ZIP Result
@@ -72,8 +82,11 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ github.ref }}
-        release_name: Build ${{ env.QTVER }}
+        tag_name: ${{ github.ref }}  # ${{ env.QTVER }}
+        release_name: Build of ${{ env.QTVER }}, build type ${{ env.QT_BUILD_TYPE }}
+        body: |
+          Build of [qt/qt5](https://github.com/qt/qt5) repository, ref `${{ env.QTVER-ORIG }}`, build type `${{ env.QT_BUILD_TYPE }}`
+          See: https://github.com/qt/qt5/tree/v5.13.0
         draft: true
         prerelease: false
 
@@ -85,5 +98,5 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above
         asset_path: ./QT-${{ env.QTVER }}.zip
-        asset_name: QT-${{ env.QTVER }}.zip
+        asset_name: QT-${{ env.QTVER }}-${{ env.QT_BUILD_TYPE }}.zip
         asset_content_type: application/zip
