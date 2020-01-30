@@ -17,13 +17,19 @@ jobs:
       with:
         repository: qt/qt5
         ref: ${{ env.QTVER }}
-        submodules: true
+        #submodules: true
         path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
 
     - name: Update QTVER
       run: |
         echo "::set-env name=QTVER-ORIG::${{ env.QTVER }}"
         echo "::set-env name=QTVER::$(git describe)"
+        echo "PS env:QTVER=$env:QTVER"
+        echo "Runner env.QTVER=${{ env.QTVER }}"
+
+    - name: Checkout qtbase
+      run: |
+        git submodule update --init qtbase
 
     - name: Prepare MSVS environment
       run: |
@@ -46,7 +52,7 @@ jobs:
       run: |
         $deploy_dir = mkdir -Force "$PWD\..\QT"
         echo "Run QT configure to $deploy_dir..."
-        $proc = .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
+        .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
         if ($LastExitCode) {exit $LastExitCode}
 
         if ( Test-Path ${{ env.QT_CONF }} ) {
@@ -74,14 +80,16 @@ jobs:
         echo "Environment Variables"
         Get-Item env:
 
-    - name: Create Release ${{ env.QTVER }}
+    - name: Create Release
       id: create_release
       uses: actions/create-release@v1.0.0
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ env.QTVER }}  # ${{ github.ref }}
-        release_name: ${{ env.QTVER }}
-        body: Build of qt/qt5 repository, ref ${{ env.QTVER-ORIG }}, byuild type ${{ env.QT_BUILD_TYPE }}
+        tag_name: ${{ env.QTVER }}
+        release_name: Build of ${{ env.QTVER }}, build type ${{ env.QT_BUILD_TYPE }}
+        body: |
+          Build of [qt/qt5](https://github.com/qt/qt5) repository, ref `${{ env.QTVER-ORIG }}`, build type `${{ env.QT_BUILD_TYPE }}`
+          See: https://github.com/qt/qt5/tree/v5.13.0
         draft: true
         prerelease: false
