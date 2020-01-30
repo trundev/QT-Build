@@ -82,16 +82,33 @@ jobs:
         echo "Environment Variables"
         Get-Item env:
 
+    - name: Export job enviroment
+      env:
+        ENV_JSON: '${{ toJson(env) }}'
+      run: |
+        Get-Content env:ENV_JSON > ../env.json
+
+    - name: Upload environment artifact
+      uses: actions/upload-artifact@v1
+      with:
+        name: build-env
+        path: ../env.json
+
   publish:
     runs-on: windows-latest
     needs: build
 
-    #env:
-    #  QT_BUILD_TYPE: ${{ jobs.build.env.QT_BUILD_TYPE }}  # may not be allowed
-
     steps:
+    - name: Download environment artifact
+      uses: actions/download-artifact@v1
+      with:
+        name: build-env
+        path: ..
+
     - name: Browse state
       run: |
+        dir .. -D 2
+        if (Test-Path ..\env.json) { Get-Content ..\env.json }
         echo "Output variable from previous step"
         echo "test_commands: test_var: ${{ steps.test_commands.outputs.test_out_var }}"
         echo ""
