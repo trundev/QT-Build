@@ -2,12 +2,14 @@ name: Build QT
 
 on: [push]
 
+env:
+  QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
+
 jobs:
   build:
     runs-on: windows-latest
 
     env:
-      QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
       #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
@@ -76,6 +78,22 @@ jobs:
       run: |
         echo "Output variable from previous step"
         echo "test_var: ${{ steps.test_commands.outputs.test_out_var }}"
+        echo ""
+        echo "Environment Variables"
+        Get-Item env:
+
+  publish:
+    runs-on: windows-latest
+    needs: build
+
+    #env:
+    #  QT_BUILD_TYPE: ${{ jobs.build.env.QT_BUILD_TYPE }}  # may not be allowed
+
+    steps:
+    - name: Browse state
+      run: |
+        echo "Output variable from previous step"
+        echo "test_commands: test_var: ${{ steps.test_commands.outputs.test_out_var }}"
         echo ""
         echo "Environment Variables"
         Get-Item env:
