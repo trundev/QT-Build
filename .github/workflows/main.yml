@@ -103,17 +103,16 @@ jobs:
       uses: actions/download-artifact@v1
       with:
         name: build-env
-        path: ..
+        path: .
 
     - name: Browse state
       run: |
-        dir .. -D 2
-        if (Test-Path ..\env.json) { Get-Content ..\env.json }
-        echo "Output variable from previous step"
-        echo "test_commands: test_var: ${{ steps.test_commands.outputs.test_out_var }}"
-        echo ""
-        echo "Environment Variables"
-        Get-Item env:
+        $build_env = Get-Content .\env.json | ConvertFrom-Json
+
+        # Export environment vaiables needed by next steps
+        ForEach ($n in "QTVER", "QT_BUILD_TYPE", "QTVER-ORIG") {
+          echo "::set-env name=$n::$($build_env.$n)"
+        }
 
     - name: Create Release
       id: create_release
@@ -126,5 +125,5 @@ jobs:
         body: |
           Build of [qt/qt5](https://github.com/qt/qt5) repository, ref `${{ env.QTVER-ORIG }}`, build type `${{ env.QT_BUILD_TYPE }}`
           See: https://github.com/qt/qt5/tree/v5.13.0
-        draft: true
-        prerelease: false
+        draft: false
+        prerelease: true
