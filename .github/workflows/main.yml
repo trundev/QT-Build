@@ -24,10 +24,9 @@ jobs:
 
     - name: Update QTVER
       run: |
-        echo "::set-env name=QTVER-ORIG::${{ env.QTVER }}"
-        echo "::set-env name=QTVER::$(git describe)"
-        echo "PS env:QTVER=$env:QTVER"
-        echo "Runner env.QTVER=${{ env.QTVER }}"
+        echo "::set-env name=QTVER-REF::$(git describe)"
+        echo "PS env:QTVER-REF=$env:QTVER-REF"
+        echo "Runner env.QTVER-REF=${{ env.QTVER-REF }}"
 
     - name: Checkout qtbase
       run: |
@@ -66,10 +65,10 @@ jobs:
     - name: Runner test commands
       id: test_commands
       run: |
-        echo "PS env:QTVER=$env:QTVER"
-        echo "Runner env.QTVER=${{ env.QTVER }}"
+        echo "PS env:QTVER=$env:QTVER, env:QTVER-REF=$env:QTVER-REF"
+        echo "Runner env.QTVER=${{ env.QTVER }}, env.QTVER-REF=${{ env.QTVER-REF }}"
         echo "Environment Variables"
-        Get-Item env:
+        Get-ChildItem env:
         echo "::log-command parameter1=test-log-parameter1,parameter2=test-log-parameter2::test-log-command value"
         echo "::set-output name=test_out_var::test_out_var-value"
         echo "::set-env name=test_env_var::test_env_var-value"
@@ -80,19 +79,19 @@ jobs:
         echo "test_var: ${{ steps.test_commands.outputs.test_out_var }}"
         echo ""
         echo "Environment Variables"
-        Get-Item env:
+        Get-ChildItem env:
 
     - name: Export job enviroment
       env:
         ENV_JSON: '${{ toJson(env) }}'
       run: |
-        Get-Content env:ENV_JSON > ../env.json
+        Get-Content env:ENV_JSON > ${{ runner.temp }}/env.json
 
     - name: Upload environment artifact
       uses: actions/upload-artifact@v1
       with:
         name: build-env
-        path: ../env.json
+        path: ${{ runner.temp }}/env.json
 
   publish:
     runs-on: windows-latest
@@ -103,16 +102,22 @@ jobs:
       uses: actions/download-artifact@v1
       with:
         name: build-env
-        path: .
+        path: ${{ runner.temp }}
+
+    - name: Import job enviroment
+      run: |
+        $build_env = Get-Content ${{ runner.temp }}/env.json | ConvertFrom-Json
+
+        # Output environment vaiables needed by next steps
+        ForEach ($n in "QTVER", "QTVER-REF", "QT_BUILD_TYPE", "VisualStudioVersion") {
+          echo "::set-env name=$n::$($build_env.$n)"
+        }
 
     - name: Browse state
       run: |
-        $build_env = Get-Content .\env.json | ConvertFrom-Json
-
-        # Export environment vaiables needed by next steps
-        ForEach ($n in "QTVER", "QT_BUILD_TYPE", "QTVER-ORIG") {
-          echo "::set-env name=$n::$($build_env.$n)"
-        }
+        dir . -D 2
+        echo "Environment Variables"
+        Get-ChildItem env:
 
     - name: Create Release
       id: create_release
@@ -120,10 +125,10 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ env.QTVER }}
-        release_name: Build of ${{ env.QTVER }}, build type ${{ env.QT_BUILD_TYPE }}
+        tag_name: ${{ env.QTVER-REF }}
+        release_name: Build of ${{ env.QTVER-REF }}, build type ${{ env.QT_BUILD_TYPE }}
         body: |
-          Build of [qt/qt5](https://github.com/qt/qt5) repository, ref `${{ env.QTVER-ORIG }}`, build type `${{ env.QT_BUILD_TYPE }}`
+          Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE }}${{ env.VisualStudioVersion }}`
           See: https://github.com/qt/qt5/tree/v5.13.0
         draft: false
         prerelease: true
