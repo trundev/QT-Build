@@ -2,12 +2,14 @@ name: Build QT
 
 on: [push]
 
+env:
+  QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
+
 jobs:
   build:
     runs-on: windows-latest
 
     env:
-      QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
       #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
@@ -19,11 +21,6 @@ jobs:
         ref: ${{ env.QTVER }}
         #submodules: true
         path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
-
-    - name: Update QTVER
-      run: |
-        echo "::set-env name=QTVER-ORIG::${{ env.QTVER }}"
-        echo "::set-env name=QTVER::$(git describe)"
 
     - name: Checkout qtbase
       run: |
@@ -51,13 +48,35 @@ jobs:
         $deploy_dir = mkdir -Force "$PWD\..\QT"
         echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
-        if ($LastExitCode) {exit $LastExitCode}
 
+    - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
+      run: |
+        # Translate QTVER
+        $QTVER_REF = $(git describe)
+        echo "::set-env name=QTVER_REF::$QTVER_REF"
+        echo "QTVER_REF set to $QTVER_REF"
+
+        # Obtain build type (TargetSpec)
+        $QT_BUILD_TYPE = ""
         if ( Test-Path ${{ env.QT_CONF }} ) {
           Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
-            if ($n -eq "TargetSpec") { echo "::set-env name=QT_BUILD_TYPE::$v"; break }
+            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "::set-env name=QT_BUILD_TYPE::$v" }
           }
         }
+        echo "QT_BUILD_TYPE set to $QT_BUILD_TYPE"
+
+        # Append Visual Studio version
+        $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
+        if ("${{ env.VisualStudioVersion }}") {
+          echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
+          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}_v${{ env.VisualStudioVersion }}"
+          echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
+        }
+
+        # QT asset name postfix
+        $ASSET_POSTFIX = "$QTVER_REF-$QT_BUILD_TYPE_EXT"
+        echo "::set-env name=ASSET_POSTFIX::$ASSET_POSTFIX"
+        echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
 
     - name: Make QT
       run: |
@@ -69,23 +88,23 @@ jobs:
         echo "Run nmake install..."
         nmake install
 
-    - name: ZIP Result
+    - name: ZIP Build Result
       run: |
         Add-Type -assembly "system.io.compression.filesystem"
-        [io.compression.zipfile]::CreateFromDirectory("$PWD\..\QT", "$PWD\QT-${{ env.QTVER }}.zip")
+        [io.compression.zipfile]::CreateFromDirectory("$PWD\..\QT", "${{ runner.temp }}/QT-asset.zip")
 
-        Get-Item QT-${{ env.QTVER }}.zip
+        Get-Item ${{ runner.temp }}/QT-asset.zip
 
     - name: Create Release
       id: create_release
       uses: actions/create-release@v1.0.0
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
       with:
-        tag_name: ${{ github.ref }}  # ${{ env.QTVER }}
-        release_name: Build of ${{ env.QTVER }}, build type ${{ env.QT_BUILD_TYPE }}
+        tag_name: ${{ env.QTVER_REF }}
+        release_name: Build of ${{ env.QTVER_REF }}, type ${{ env.QT_BUILD_TYPE }}
         body: |
-          Build of [qt/qt5](https://github.com/qt/qt5) repository, ref `${{ env.QTVER-ORIG }}`, build type `${{ env.QT_BUILD_TYPE }}`
+          Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE_EXT }}`
           See: https://github.com/qt/qt5/tree/v5.13.0
         draft: true
         prerelease: false
@@ -94,9 +113,9 @@ jobs:
       id: upload-release-asset 
       uses: actions/upload-release-asset@v1.0.1
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above
-        asset_path: ./QT-${{ env.QTVER }}.zip
-        asset_name: QT-${{ env.QTVER }}-${{ env.QT_BUILD_TYPE }}.zip
+        asset_path: ${{ runner.temp }}/QT-asset.zip
+        asset_name: QT-${{ env.ASSET_POSTFIX }}.zip
         asset_content_type: application/zip
