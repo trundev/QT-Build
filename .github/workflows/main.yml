@@ -1,9 +1,11 @@
 name: Build QT
 
-on: [push]
+on:
+  release:
+    types: [published, unpublished, edited, prereleased]
 
 env:
-  QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
+  QTVER: ${{ github.ref }}  # Pushed tag-name
 
 jobs:
   build:
@@ -15,18 +17,27 @@ jobs:
       #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
 
     steps:
+    - name: Obtain release upload URL
+      uses: actions/github-script@0.4.0
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          tag = '${{ env.QTVER }}'.replace(/^refs\/tags\//, '')
+          console.log('tag:' + tag)
+          result = await github.repos.getReleaseByTag({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            tag: tag
+          })
+          console.log(result)
+          return result
+
     - uses: actions/checkout@v1
       with:
         repository: qt/qt5
         ref: ${{ env.QTVER }}
         #submodules: true
         path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
-
-    - name: Update QTVER
-      run: |
-        echo "::set-env name=QTVER-REF::$(git describe)"
-        echo "PS env:QTVER-REF=$env:QTVER-REF"
-        echo "Runner env.QTVER-REF=${{ env.QTVER-REF }}"
 
     - name: Checkout qtbase
       run: |
@@ -54,19 +65,41 @@ jobs:
         $deploy_dir = mkdir -Force "$PWD\..\QT"
         echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
-        if ($LastExitCode) {exit $LastExitCode}
 
+    - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
+      run: |
+        # Translate QTVER
+        $QTVER_REF = $(git describe)
+        echo "::set-env name=QTVER_REF::$QTVER_REF"
+        echo "QTVER_REF set to $QTVER_REF"
+
+        # Obtain build type (TargetSpec)
+        $QT_BUILD_TYPE = ""
         if ( Test-Path ${{ env.QT_CONF }} ) {
           Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
-            if ($n -eq "TargetSpec") { echo "::set-env name=QT_BUILD_TYPE::$v"; break }
+            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "::set-env name=QT_BUILD_TYPE::$v" }
           }
         }
+        echo "QT_BUILD_TYPE set to $QT_BUILD_TYPE"
+
+        # Append Visual Studio version
+        $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
+        if ("${{ env.VisualStudioVersion }}") {
+          echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
+          $QT_BUILD_TYPE_EXT = "$QT_BUILD_TYPE_EXT_v${{ env.VisualStudioVersion }}"
+          echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
+        }
+
+        # QT asset name postfix
+        $ASSET_POSTFIX = "$QTVER_REF-$QT_BUILD_TYPE_EXT"
+        echo "::set-env name=ASSET_POSTFIX::$ASSET_POSTFIX"
+        echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
 
     - name: Runner test commands
       id: test_commands
       run: |
-        echo "PS env:QTVER=$env:QTVER, env:QTVER-REF=$env:QTVER-REF"
-        echo "Runner env.QTVER=${{ env.QTVER }}, env.QTVER-REF=${{ env.QTVER-REF }}"
+        echo "PS env:QTVER=$env:QTVER, env:QTVER_REF=$env:QTVER_REF"
+        echo "Runner env.QTVER=${{ env.QTVER }}, env.QTVER_REF=${{ env.QTVER_REF }}"
         echo "Environment Variables"
         Get-ChildItem env:
         echo "::log-command parameter1=test-log-parameter1,parameter2=test-log-parameter2::test-log-command value"
@@ -109,7 +142,7 @@ jobs:
         $build_env = Get-Content ${{ runner.temp }}/env.json | ConvertFrom-Json
 
         # Output environment vaiables needed by next steps
-        ForEach ($n in "QTVER", "QTVER-REF", "QT_BUILD_TYPE", "VisualStudioVersion") {
+        ForEach ($n in "QTVER", "QTVER_REF", "QT_BUILD_TYPE", "QT_BUILD_TYPE_EXT", "ASSET_UPLOAD_URL") {
           echo "::set-env name=$n::$($build_env.$n)"
         }
 
@@ -121,14 +154,15 @@ jobs:
 
     - name: Create Release
       id: create_release
+      if: env.ASSET_UPLOAD_URL == ''
       uses: actions/create-release@v1.0.0
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ env.QTVER-REF }}
-        release_name: Build of ${{ env.QTVER-REF }}, build type ${{ env.QT_BUILD_TYPE }}
+        tag_name: ${{ env.QTVER_REF }}
+        release_name: Build of ${{ env.QTVER_REF }}, type ${{ env.QT_BUILD_TYPE }}
         body: |
-          Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE }}${{ env.VisualStudioVersion }}`
+          Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE_EXT }}`
           See: https://github.com/qt/qt5/tree/v5.13.0
         draft: false
         prerelease: true
