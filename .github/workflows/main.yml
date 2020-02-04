@@ -18,19 +18,22 @@ jobs:
 
     steps:
     - name: Obtain release upload URL
+      id: get_upload_url
       uses: actions/github-script@0.4.0
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           tag = '${{ env.QTVER }}'.replace(/^refs\/tags\//, '')
-          console.log('tag:' + tag)
+          console.log('Get release by tag: ' + tag)
           result = await github.repos.getReleaseByTag({
             owner: context.repo.owner,
             repo: context.repo.repo,
             tag: tag
           })
-          console.log(result)
-          return result
+          upload_url = result.data.upload_url
+          console.log('::set-env name=ASSET_UPLOAD_URL::' + upload_url)
+          console.log('ASSET_UPLOAD_URL set to ' + upload_url)
+          return upload_url
 
     - uses: actions/checkout@v1
       with:
@@ -86,7 +89,7 @@ jobs:
         $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
         if ("${{ env.VisualStudioVersion }}") {
           echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
-          $QT_BUILD_TYPE_EXT = "$QT_BUILD_TYPE_EXT_v${{ env.VisualStudioVersion }}"
+          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}_v${{ env.VisualStudioVersion }}"
           echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
         }
 
@@ -100,6 +103,7 @@ jobs:
       run: |
         echo "PS env:QTVER=$env:QTVER, env:QTVER_REF=$env:QTVER_REF"
         echo "Runner env.QTVER=${{ env.QTVER }}, env.QTVER_REF=${{ env.QTVER_REF }}"
+        echo 'get_upload_url result: ${{ steps.get_upload_url.outputs.result }}'
         echo "Environment Variables"
         Get-ChildItem env:
         echo "::log-command parameter1=test-log-parameter1,parameter2=test-log-parameter2::test-log-command value"
@@ -166,3 +170,16 @@ jobs:
           See: https://github.com/qt/qt5/tree/v5.13.0
         draft: false
         prerelease: true
+
+    - name: Check upload URL
+      uses: actions/github-script@0.4.0
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          upload_url = '${{ env.ASSET_UPLOAD_URL }}'
+          if (!upload_url) {
+            console.log('Release ID: ' + '${{ steps.create_release.outputs.id }}')
+            upload_url = '${{ steps.create_release.outputs.upload_url }}'
+          }
+          console.log('upload_url: ' + upload_url)
+          return upload_url
