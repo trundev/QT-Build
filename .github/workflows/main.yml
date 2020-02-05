@@ -1,4 +1,4 @@
-name: Build QT
+name: Build_QT
 
 on:
   release:
@@ -30,6 +30,9 @@ jobs:
             repo: context.repo.repo,
             tag: tag
           })
+          release_id = result.data.id
+          console.log('::set-env name=RELEASE_ID::' + release_id)
+          console.log('RELEASE_ID set to ' + release_id)
           upload_url = result.data.upload_url
           console.log('::set-env name=ASSET_UPLOAD_URL::' + upload_url)
           console.log('ASSET_UPLOAD_URL set to ' + upload_url)
@@ -146,7 +149,7 @@ jobs:
         $build_env = Get-Content ${{ runner.temp }}/env.json | ConvertFrom-Json
 
         # Output environment vaiables needed by next steps
-        ForEach ($n in "QTVER", "QTVER_REF", "QT_BUILD_TYPE", "QT_BUILD_TYPE_EXT", "ASSET_UPLOAD_URL") {
+        ForEach ($n in "QTVER", "QTVER_REF", "QT_BUILD_TYPE", "QT_BUILD_TYPE_EXT", "RELEASE_ID", "ASSET_UPLOAD_URL") {
           echo "::set-env name=$n::$($build_env.$n)"
         }
 
@@ -176,10 +179,33 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
+          release_id = '${{ env.RELEASE_ID }}'
           upload_url = '${{ env.ASSET_UPLOAD_URL }}'
           if (!upload_url) {
-            console.log('Release ID: ' + '${{ steps.create_release.outputs.id }}')
+            release_id = '${{ steps.create_release.outputs.id }}'
             upload_url = '${{ steps.create_release.outputs.upload_url }}'
           }
+          console.log('release_id: ' + release_id)
           console.log('upload_url: ' + upload_url)
-          return upload_url
+
+          result = await github.repos.getRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: release_id
+          })
+
+          // Edit the release
+          release_name = result.data.name
+          release_body = result.data.body
+
+          release_name = 'Build of ${{ env.QTVER_REF }}, type ${{ env.QT_BUILD_TYPE }}'
+          release_body = '![${{ github.workflow }}](https://github.com/${{ github.repository }}/workflows/${{ github.workflow }}/badge.svg)\n' + release_body
+          github.repos.updateRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: release_id,
+            name: release_name,
+            body: release_body,
+          })
+
+          return result
