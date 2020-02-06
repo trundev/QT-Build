@@ -2,10 +2,14 @@ name: Build_QT
 
 on:
   release:
-    types: [published, unpublished, edited, prereleased]
+    types: [published, prereleased]
 
 env:
   QTVER: ${{ github.ref }}  # Pushed tag-name
+  BADGE_PENDING: '[![Build Pending](https://rawgithub.com/badges/badger/master/static/travis_pending.svg)](#)'
+  BADGE_PASSED: '[![Build Passing](https://rawgithub.com/badges/badger/master/static/travis_passing.svg)](#)'
+  BADGE_FAILED: '[![Build Failing](https://rawgithub.com/badges/badger/master/static/travis_failing.svg)](#)'
+  BADGE_POSTFIX: ' [GitHub action](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n'
 
 jobs:
   build:
@@ -33,6 +37,16 @@ jobs:
           release_id = result.data.id
           console.log('::set-env name=RELEASE_ID::' + release_id)
           console.log('RELEASE_ID set to ' + release_id)
+
+          release_body = result.data.body
+          github.repos.updateRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: release_id,
+            name: 'Pending build of ' + tag,
+            body: '${{ env.BADGE_PENDING }}${{ env.BADGE_POSTFIX }}' + release_body,
+          })
+
           upload_url = result.data.upload_url
           console.log('::set-env name=ASSET_UPLOAD_URL::' + upload_url)
           console.log('ASSET_UPLOAD_URL set to ' + upload_url)
@@ -154,6 +168,7 @@ jobs:
         }
 
     - name: Browse state
+      id: browse_state
       run: |
         dir . -D 2
         echo "Environment Variables"
@@ -176,9 +191,17 @@ jobs:
 
     - name: Check upload URL
       uses: actions/github-script@0.4.0
+      if: always()
+      env:
+        BROWSE_STATUS: ${{ steps.browse_state.status }}
+        CREATE_STATUS: ${{ steps.create_release.status }}
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
+          // Job status experiments
+          console.log('env.BROWSE_STATUS: ${{ env.BROWSE_STATUS}}')
+          console.log('env.CREATE_STATUS: ${{ env.CREATE_STATUS}}')
+
           release_id = '${{ env.RELEASE_ID }}'
           upload_url = '${{ env.ASSET_UPLOAD_URL }}'
           if (!upload_url) {
@@ -197,15 +220,19 @@ jobs:
           // Edit the release
           release_name = result.data.name
           release_body = result.data.body
+          prerelease = result.data.prerelease
 
           release_name = 'Build of ${{ env.QTVER_REF }}, type ${{ env.QT_BUILD_TYPE }}'
-          release_body = '![${{ github.workflow }}](https://github.com/${{ github.repository }}/workflows/${{ github.workflow }}/badge.svg)\n' + release_body
+          badge = '${{ env.CREATE_STATUS }}' == 'success' ? '${{ env.BADGE_PASSED }}' : '${{ env.BADGE_FAILED }}'
+          if ('${{ env.CREATE_STATUS }}' == 'success') prerelease = false
+          release_body = release_body.replace('${{ env.BADGE_PENDING }}', badge)
           github.repos.updateRelease({
             owner: context.repo.owner,
             repo: context.repo.repo,
             release_id: release_id,
             name: release_name,
             body: release_body,
+            prerelease: prerelease,
           })
 
           return result
