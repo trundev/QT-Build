@@ -126,6 +126,8 @@ jobs:
         echo "::log-command parameter1=test-log-parameter1,parameter2=test-log-parameter2::test-log-command value"
         echo "::set-output name=test_out_var::test_out_var-value"
         echo "::set-env name=test_env_var::test_env_var-value"
+        unzip -help
+        echo "::add-path::$PWD\path-test-dir"
 
     - name: Browse state
       run: |
@@ -195,12 +197,14 @@ jobs:
       env:
         BROWSE_STATUS: ${{ steps.browse_state.status }}
         CREATE_STATUS: ${{ steps.create_release.status }}
+        CREATE_SUCCESS: ${{ steps.create_release.outputs.id != '' }}
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           // Job status experiments
-          console.log('env.BROWSE_STATUS: ${{ env.BROWSE_STATUS}}')
-          console.log('env.CREATE_STATUS: ${{ env.CREATE_STATUS}}')
+          console.log('env.BROWSE_STATUS: ${{ env.BROWSE_STATUS }}')
+          console.log('env.CREATE_STATUS: ${{ env.CREATE_STATUS }}')
+          console.log('env.CREATE_SUCCESS: ${{ env.CREATE_SUCCESS }}')
 
           release_id = '${{ env.RELEASE_ID }}'
           upload_url = '${{ env.ASSET_UPLOAD_URL }}'
@@ -234,5 +238,23 @@ jobs:
             body: release_body,
             prerelease: prerelease,
           })
+
+          // Update asset label
+          const assets = result.data.assets
+          for (i in assets) {
+            const a = assets[i]
+            console.log('Inspecting: ' + a.name + ', ' + a.label)
+
+            github.repos.updateReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              asset_id: a.id,
+              label: 'Label for ' + a.name + ', size ' + a.size,
+            })
+          }
+
+          fd = fs.openSync('test-file.bin', 'w')
+          fs.writeSync(fd, 'This a test output via fs.writeSync()')
+          fs.closeSync(fd)
 
           return result
