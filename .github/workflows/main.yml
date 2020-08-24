@@ -1,9 +1,21 @@
 name: Build QT
 
-on: [push]
+on:
+  workflow_dispatch:
+    inputs:
+      QT_VERSION:
+        description: "QT version"
+        required: true
+        default: "5.15.0"
+      PLATFORM:
+        description: "Build platform and compiler (win32-msvc)"
+        required: false
+        default: "win32-msvc"
 
 env:
-  QTVER: wip/qt3dstudio/2.1   # Change this to the QT version to build
+  QTVER: "v${{ github.event.inputs.QT_VERSION }}"
+  NUPKG_VER: "${{ github.event.inputs.QT_VERSION }}"
+  PLATFORM: "${{ github.event.inputs.PLATFORM }}"
 
 jobs:
   build:
@@ -12,10 +24,10 @@ jobs:
     env:
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
-      #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
       # Intermediate folders
       QT_ROOT: '${{ github.workspace}}/../qt/'
       QT_DEPLOY: '${{ github.workspace}}/../deploy/'
+      MAKE_TOOL: make
 
     steps:
     - uses: actions/checkout@v1
@@ -32,6 +44,7 @@ jobs:
       run: git -C ${{ env.QT_ROOT }} submodule update --init qtbase
 
     - name: Prepare MSVS environment
+      if: contains( env.PLATFORM, 'msvc')
       run: |
         $tempfile = [IO.Path]::GetTempFileName()
         $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
@@ -47,6 +60,7 @@ jobs:
           }
         }
         del $tempfile
+        echo "::set-env name=MAKE_TOOL::nmake"
 
     - name: Configure QT
       run: |
@@ -55,14 +69,9 @@ jobs:
         echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
-    - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
+    - name: Select QT_BUILD_TYPE and QT_BUILD_TYPE_EXT
       run: |
         cd ${{ env.QT_ROOT }}
-
-        # Translate QTVER
-        $QTVER_REF = $(git describe)
-        echo "::set-env name=QTVER_REF::$QTVER_REF"
-        echo "QTVER_REF set to $QTVER_REF"
 
         # Obtain build type (TargetSpec)
         $QT_BUILD_TYPE = ""
@@ -77,55 +86,32 @@ jobs:
         $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
         if ("${{ env.VisualStudioVersion }}") {
           echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
-          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}_v${{ env.VisualStudioVersion }}"
-          echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
+          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}-v${{ env.VisualStudioVersion }}"
         }
-
-        # QT asset name postfix
-        $ASSET_POSTFIX = "$QTVER_REF-$QT_BUILD_TYPE_EXT"
-        echo "::set-env name=ASSET_POSTFIX::$ASSET_POSTFIX"
-        echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
+        echo "::set-env name=QT_BUILD_TYPE_EXT::$QT_BUILD_TYPE_EXT"
+        echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
 
     - name: Make QT
       run: |
         cd ${{ env.QT_ROOT }}
-        echo "Run nmake..."
-        nmake
+        echo "Run ${{ env.MAKE_TOOL }}..."
+        ${{ env.MAKE_TOOL }}
 
     - name: Install QT
       run: |
         cd ${{ env.QT_ROOT }}
-        echo "Run nmake install..."
-        nmake install
+        echo "Run ${{ env.MAKE_TOOL }} install..."
+        ${{ env.MAKE_TOOL }} install
 
-    - name: ZIP Build Result
+    - name: Create NuGet package
+      run: nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
+
+    - name: Obtain NuGet package name
       run: |
-        Add-Type -assembly "system.io.compression.filesystem"
-        [io.compression.zipfile]::CreateFromDirectory("${{ env.QT_DEPLOY }}", "${{ runner.temp }}/QT-asset.zip")
+        $package_name = $(Get-Item *.nupkg).Name
+        echo "::set-env name=NUPKG_NAME::$package_name"
 
-        Get-Item ${{ runner.temp }}/QT-asset.zip
-
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1.0.0
-      env:
-        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
+    - uses: actions/upload-artifact@v1
       with:
-        tag_name: ${{ env.QTVER_REF }}
-        release_name: Build of ${{ env.QTVER_REF }}, type ${{ env.QT_BUILD_TYPE }}
-        body: |
-          Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE_EXT }}`
-          See: https://github.com/qt/qt5/tree/v5.13.0
-        draft: true
-        prerelease: false
-
-    - name: Upload Release Asset
-      id: upload-release-asset 
-      uses: actions/upload-release-asset@v1.0.1
-      env:
-        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above
-        asset_path: ${{ runner.temp }}/QT-asset.zip
-        asset_name: QT-${{ env.ASSET_POSTFIX }}.zip
-        asset_content_type: application/zip
+        name: NuGet-package
+        path: ${{ env.NUPKG_NAME }}
