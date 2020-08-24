@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd">
+  <metadata>
+    <id>QT-Build</id>
+    <version>0.0</version>  <!-- To be overriden by "-Version" option -->
+    <description>Prebuilt QT package to be used by GitHub actions</description>
+    <authors>trundev</authors>
+    <repository type="git" url="https://github.com/trundev/QT-Build/" />
+  </metadata>
+  <files>
+    <file src="**"/>    <!-- "-BasePath" must point to the deployment dir -->
+  </files>
+</package>

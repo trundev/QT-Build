@@ -1,15 +1,21 @@
 name: Build_QT
 
 on:
-  release:
-    types: [published, prereleased]
+  workflow_dispatch:
+    inputs:
+      QT_VERSION:
+        description: "QT version"
+        required: true
+        default: "5.15.0"
+      COMPILER:
+        description: "Build compiler (msvc)"
+        required: false
+        default: "msvc"
 
 env:
-  QTVER: ${{ github.ref }}  # Pushed tag-name
-  BADGE_PENDING: '[![Build Pending](https://rawgithub.com/badges/badger/master/static/travis_pending.svg)](#)'
-  BADGE_PASSED: '[![Build Passing](https://rawgithub.com/badges/badger/master/static/travis_passing.svg)](#)'
-  BADGE_FAILED: '[![Build Failing](https://rawgithub.com/badges/badger/master/static/travis_failing.svg)](#)'
-  BADGE_POSTFIX: ' [GitHub action](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n'
+  QTVER: "v${{ github.event.inputs.QT_VERSION }}"
+  NUPKG_VER: "${{ github.event.inputs.QT_VERSION }}"
+  COMPILER: "${{ github.event.inputs.COMPILER }}"
 
 jobs:
   build:
@@ -22,40 +28,10 @@ jobs:
       # Intermediate folders
       QT_SRC: 'qt'
       QT_DEPLOY: 'deploy'
+      MAKE_TOOL: make
 
     steps:
-    - name: Preprocess Release
-      uses: actions/github-script@v6
-      with:
-        github-token: ${{ env.GITHUB_TOKEN }}
-        script: |
-          tag = '${{ env.QTVER }}'.replace(/^refs\/tags\//, '')
-          console.log('Get release by tag: ' + tag)
-          result = await github.rest.repos.getReleaseByTag({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            tag: tag
-          })
-          release_id = result.data.id
-          upload_url = result.data.upload_url
-          release_body = result.data.body
-
-          const fs = require('fs')
-          fs.appendFile(process.env.GITHUB_ENV, 'RELEASE_ID=' + release_id + '\n', (err) => {})
-          console.log('RELEASE_ID set to ' + release_id)
-          fs.appendFile(process.env.GITHUB_ENV, 'ASSET_UPLOAD_URL=' + upload_url + '\n', (err) => {})
-          console.log('ASSET_UPLOAD_URL set to ' + upload_url)
-
-          // Update release with a 'pending' badge
-          github.rest.repos.updateRelease({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: release_id,
-            name: 'Pending build of ' + tag,
-            body: '${{ env.BADGE_PENDING }}${{ env.BADGE_POSTFIX }}' + release_body,
-          })
-
-          return upload_url
+    - uses: actions/checkout@v3
 
     - name: Checkout QT
       uses: actions/checkout@v3
@@ -71,6 +47,7 @@ jobs:
         git submodule update --init qtbase
 
     - name: Prepare MSVS environment
+      if: contains( env.COMPILER, 'msvc')
       run: |
         echo "MSVC environment by: ${{ env.vcvars_bat }}"
         $tempfile = [IO.Path]::GetTempFileName()
@@ -88,6 +65,8 @@ jobs:
           }
         }
         del $tempfile
+        echo "MAKE_TOOL=nmake" >> $env:GITHUB_ENV
+        echo "MAKE_TOOL set to nmake"
 
     - name: Configure QT
       run: |
@@ -96,14 +75,9 @@ jobs:
         cd ${{ env.QT_SRC }}
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
-    - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
+    - name: Select QT_BUILD_TYPE and QT_BUILD_TYPE_EXT
       working-directory: ${{ env.QT_SRC }}
       run: |
-        # Translate QTVER
-        $QTVER_REF = $(git describe)
-        echo "QTVER_REF=$QTVER_REF" >> $env:GITHUB_ENV
-        echo "QTVER_REF set to $QTVER_REF"
-
         # Obtain build type (TargetSpec)
         $QT_BUILD_TYPE = ""
         if ( Test-Path ${{ env.QT_CONF }} ) {
@@ -117,92 +91,33 @@ jobs:
         $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
         if ("${{ env.VisualStudioVersion }}") {
           echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
-          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}_v${{ env.VisualStudioVersion }}"
+          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}-v${{ env.VisualStudioVersion }}"
         }
         echo "QT_BUILD_TYPE_EXT=$QT_BUILD_TYPE_EXT" >> $env:GITHUB_ENV
         echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
 
-        # QT asset name postfix
-        $ASSET_POSTFIX = "$QTVER_REF-$QT_BUILD_TYPE_EXT"
-        echo "ASSET_POSTFIX=$ASSET_POSTFIX" >> $env:GITHUB_ENV
-        echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
-
     - name: Make QT
       working-directory: ${{ env.QT_SRC }}
       run: |
-        echo "Run nmake..."
-        nmake
+        echo "Run ${{ env.MAKE_TOOL }}..."
+        ${{ env.MAKE_TOOL }}
 
     - name: Install QT
       working-directory: ${{ env.QT_SRC }}
       run: |
-        echo "Run nmake install..."
-        nmake install
+        echo "Run ${{ env.MAKE_TOOL }} install..."
+        ${{ env.MAKE_TOOL }} install
 
-    - name: ZIP Build Result
+    - name: Create NuGet package
+      run: nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
+
+    - name: Obtain NuGet package name
       run: |
-        Add-Type -assembly "system.io.compression.filesystem"
-        [io.compression.zipfile]::CreateFromDirectory("${{ env.QT_DEPLOY }}", "${{ runner.temp }}/QT-asset.zip")
-        if (! $?) { exit 255 }
+        $package_name = $(Get-Item *.nupkg).Name
+        echo "NUPKG_NAME=$package_name" >> $env:GITHUB_ENV
+        echo "NUPKG_NAME set to $package_name"
 
-        $ASSET_FILE = Get-Item ${{ runner.temp }}/QT-asset.zip
-        echo "ASSET_FILE=$ASSET_FILE" >> $env:GITHUB_ENV
-        echo "ASSET_FILE set to $ASSET_FILE"
-
-    - name: Upload Release Asset
-      uses: actions/github-script@v6
+    - uses: actions/upload-artifact@v3
       with:
-        github-token: ${{ env.GITHUB_TOKEN }}
-        script: |
-          const release_id = process.env.RELEASE_ID
-          const assetPath = process.env.ASSET_FILE
-          console.log('Upload asset: ' + assetPath + ', to release: ' + release_id)
-          const fs = require('fs')
-          const uploadAssetResponse = await github.rest.repos.uploadReleaseAsset({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: release_id,
-            name: 'QT-${{ env.ASSET_POSTFIX }}.zip',
-            headers: {'content-type': 'application/zip'},
-            data: fs.readFileSync(assetPath)
-          });
-          const browser_download_url = uploadAssetResponse.data.browserDownloadUrl
-          console.log('browser_download_url is ' + browser_download_url)
-
-    - name: Postprocess Release
-      uses: actions/github-script@v6
-      if: always()
-      with:
-        github-token: ${{ env.GITHUB_TOKEN }}
-        script: |
-          const release_id = process.env.RELEASE_ID
-          console.log('Get release: ' + release_id)
-          result = await github.rest.repos.getRelease({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: release_id
-          })
-          release_name = result.data.name
-          release_body = result.data.body
-          prerelease = result.data.prerelease
-
-          // Update release with the final badge
-          if ('${{ env.ASSET_FILE }}') {
-            badge = '${{ env.BADGE_PASSED }}'
-            prerelease = false
-          }
-          else {
-            badge = '${{ env.BADGE_FAILED }}'
-          }
-          release_name = 'Build of ${{ env.QTVER_REF }}, type ${{ env.QT_BUILD_TYPE }}'
-          release_body = release_body.replace('${{ env.BADGE_PENDING }}', badge)
-          release_body = release_body +
-            '\n* Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE_EXT }}`'
-          github.rest.repos.updateRelease({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: release_id,
-            name: release_name,
-            body: release_body,
-            prerelease: prerelease,
-          })
+        name: NuGet-package
+        path: ${{ env.NUPKG_NAME }}
