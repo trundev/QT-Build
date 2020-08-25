@@ -11,6 +11,10 @@ on:
         description: "Build platform and compiler (win32-msvc)"
         required: false
         default: "win32-msvc"
+      PUBLISH:
+        description: "Publish package in github (true, false)"
+        required: false
+        default: "false"
 
 env:
   QTVER: "v${{ github.event.inputs.QT_VERSION }}"
@@ -106,12 +110,23 @@ jobs:
     - name: Create NuGet package
       run: nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
 
+    - name: Publish NuGet package
+      if: github.event.inputs.PUBLISH == 'true'
+      run: |
+        echo "# Authenticate"
+        dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json -n github -u ${{ github.repository_owner }} -p ${{ secrets.REPO_TOKEN }}
+
+        echo "# Publish"
+        dotnet nuget push "*.nupkg" --source "github"
+
     - name: Obtain NuGet package name
+      if: github.event.inputs.PUBLISH != 'true'
       run: |
         $package_name = $(Get-Item *.nupkg).Name
         echo "::set-env name=NUPKG_NAME::$package_name"
 
     - uses: actions/upload-artifact@v1
+      if: github.event.inputs.PUBLISH != 'true'
       with:
         name: NuGet-package
         path: ${{ env.NUPKG_NAME }}
