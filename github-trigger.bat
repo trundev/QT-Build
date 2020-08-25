@@ -3,7 +3,7 @@ if _%REPO% == _ set REPO=QT-Build
 
 set WORKFLOW=main.yml
 set WORKFLOW_REF=NuGet
-set WORKFLOW_INPUTS={\"QT_VERSION\": \"5.15.0\", \"COMPILER\": \"msvc\"}
+set WORKFLOW_INPUTS={\"QT_VERSION\": \"5.15.0\", \"COMPILER\": \"msvc\", \"PUBLISH\": \"false\"}
 
 set OPT=
 set OPT=-H "Accept: application/vnd.github.v3+json" %OPT%

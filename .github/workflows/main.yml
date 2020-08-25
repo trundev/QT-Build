@@ -11,6 +11,14 @@ on:
         description: "Build compiler (msvc)"
         required: false
         default: "msvc"
+      PUBLISH:
+        description: "Publish result package in github"
+        required: false
+        default: "false"
+        type: choice
+        options:
+        - true
+        - false
 
 env:
   QTVER: "v${{ github.event.inputs.QT_VERSION }}"
@@ -24,7 +32,7 @@ jobs:
     env:
       vcvars_bat: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # Alternative token: ${{ secrets.REPO_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # Replaced by secrets.REPO_TOKEN, if exists
       # Intermediate folders
       QT_SRC: 'qt'
       QT_DEPLOY: 'deploy'
@@ -32,6 +40,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+
+    - name: Select REPO_TOKEN (if exists)
+      run: |
+        if ("${{ secrets.REPO_TOKEN }}") {
+          echo "GITHUB_TOKEN=${{ secrets.REPO_TOKEN }}" >> $env:GITHUB_ENV
+          echo "GITHUB_TOKEN set to <REPO_TOKEN>"
+        } else {
+          echo "No REPO_TOKEN secret, keep original GITHUB_TOKEN"
+        }
 
     - name: Checkout QT
       uses: actions/checkout@v3
@@ -111,13 +128,27 @@ jobs:
     - name: Create NuGet package
       run: nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
 
+    - name: Publish NuGet package
+      if: github.event.inputs.PUBLISH == 'true'
+      run: |
+        # See https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry
+        echo "# Authenticate"
+        dotnet nuget add source --username ${{ github.repository_owner }} --password ${{ env.GITHUB_TOKEN }} `
+            --name github "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+        if ($LASTEXITCODE) {exit $LASTEXITCODE}
+
+        echo "# Publish"
+        dotnet nuget push "*.nupkg" --api-key ${{ env.GITHUB_TOKEN }} --source "github"
+
     - name: Obtain NuGet package name
+      if: github.event.inputs.PUBLISH != 'true'
       run: |
         $package_name = $(Get-Item *.nupkg).Name
         echo "NUPKG_NAME=$package_name" >> $env:GITHUB_ENV
         echo "NUPKG_NAME set to $package_name"
 
     - uses: actions/upload-artifact@v3
+      if: github.event.inputs.PUBLISH != 'true'
       with:
         name: NuGet-package
         path: ${{ env.NUPKG_NAME }}
