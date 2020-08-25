@@ -13,18 +13,23 @@ jobs:
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
       #QT_BUILD_TYPE: # To be extracted from qt.conf / TargetSpec, like win32-msvc, win32-g++, etc.
+      # Intermediate folders
+      QT_ROOT: '${{ github.workspace}}/../qt/'
+      QT_DEPLOY: '${{ github.workspace}}/../deploy/'
 
     steps:
     - uses: actions/checkout@v1
+
+    - name: Checkout QT
+      uses: actions/checkout@v1
       with:
         repository: qt/qt5
         ref: ${{ env.QTVER }}
-        #submodules: true
-        path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
+        #submodules: 'true'
+        path: qt  # This is QT_ROOT
 
-    - name: Checkout qtbase
-      run: |
-        git submodule update --init qtbase
+    - name: Checkout qtbase submodule
+      run: git -C ${{ env.QT_ROOT }} submodule update --init qtbase
 
     - name: Prepare MSVS environment
       run: |
@@ -45,12 +50,15 @@ jobs:
 
     - name: Configure QT
       run: |
-        $deploy_dir = mkdir -Force "$PWD\..\QT"
+        cd ${{ env.QT_ROOT }}
+        $deploy_dir = mkdir -Force "${{ env.QT_DEPLOY }}"
         echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
     - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
       run: |
+        cd ${{ env.QT_ROOT }}
+
         # Translate QTVER
         $QTVER_REF = $(git describe)
         echo "::set-env name=QTVER_REF::$QTVER_REF"
@@ -80,18 +88,20 @@ jobs:
 
     - name: Make QT
       run: |
+        cd ${{ env.QT_ROOT }}
         echo "Run nmake..."
         nmake
 
     - name: Install QT
       run: |
+        cd ${{ env.QT_ROOT }}
         echo "Run nmake install..."
         nmake install
 
     - name: ZIP Build Result
       run: |
         Add-Type -assembly "system.io.compression.filesystem"
-        [io.compression.zipfile]::CreateFromDirectory("$PWD\..\QT", "${{ runner.temp }}/QT-asset.zip")
+        [io.compression.zipfile]::CreateFromDirectory("${{ env.QT_DEPLOY }}", "${{ runner.temp }}/QT-asset.zip")
 
         Get-Item ${{ runner.temp }}/QT-asset.zip
 
