@@ -8,9 +8,9 @@ on:
         required: true
         default: "5.15.0"
       PLATFORM:
-        description: "Build platform and compiler (win32-msvc)"
+        description: "Build compiler platform (msvc, gcc)"
         required: false
-        default: "win32-msvc"
+        default: "msvc"
       PUBLISH:
         description: "Publish package in github (true, false)"
         required: false
@@ -23,8 +23,18 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false  # Try all matrix entries
+      matrix:
+        include:
+        - os: windows-latest
+          powershell: true
+          bash_only: '#'
+        - os: ubuntu-latest
+          bash: true
+          powershell_only: '#'
 
+    runs-on: ${{ matrix.os }}
     env:
       vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
@@ -48,7 +58,7 @@ jobs:
       run: git -C ${{ env.QT_ROOT }} submodule update --init qtbase
 
     - name: Prepare MSVS environment
-      if: contains( env.PLATFORM, 'msvc')
+      if: contains( env.PLATFORM, 'msvc') && matrix.powershell
       run: |
         $tempfile = [IO.Path]::GetTempFileName()
         $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
@@ -66,32 +76,46 @@ jobs:
         del $tempfile
         echo "::set-env name=MAKE_TOOL::nmake"
 
-    - name: Configure QT
+    - name: Configure QT (windows)
+      if: matrix.powershell
       run: |
         cd ${{ env.QT_ROOT }}
         $deploy_dir = mkdir -Force "${{ env.QT_DEPLOY }}"
         echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
+    - name: Configure QT (linux)
+      if: matrix.bash
+      run: |
+        cd ${{ env.QT_ROOT }}
+        sudo apt-get install libgles2-mesa-dev
+        echo "Run QT configure to ${{ env.QT_DEPLOY }}..."
+        ./configure -prefix ${{ env.QT_DEPLOY }} -nomake examples -nomake tests -opensource -confirm-license
+
     - name: Select QT_BUILD_TYPE and QT_BUILD_TYPE_EXT
       run: |
         cd ${{ env.QT_ROOT }}
 
         # Obtain build type (TargetSpec)
-        $QT_BUILD_TYPE = ""
-        if ( Test-Path ${{ env.QT_CONF }} ) {
-          Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
-            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "::set-env name=QT_BUILD_TYPE::$v" }
-          }
-        }
+        ${{ matrix.powershell_only }}$QT_BUILD_TYPE = ""
+        ${{ matrix.powershell_only }}if ( Test-Path ${{ env.QT_CONF }} ) {
+        ${{ matrix.powershell_only }}  Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
+        ${{ matrix.powershell_only }}    if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "::set-env name=QT_BUILD_TYPE::$v" }
+        ${{ matrix.powershell_only }}  }
+        ${{ matrix.powershell_only }}}
+        ${{ matrix.bash_only }}QT_BUILD_TYPE=""
+        ${{ matrix.bash_only }}if [ -f ${{ env.QT_CONF }} ]; then
+        ${{ matrix.bash_only }}  QT_BUILD_TYPE=$(awk -F= '/TargetSpec *=/ {print $2}' ${{ env.QT_CONF }})
+        ${{ matrix.bash_only }}fi
         echo "QT_BUILD_TYPE set to $QT_BUILD_TYPE"
 
         # Append Visual Studio version
-        $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
-        if ("${{ env.VisualStudioVersion }}") {
-          echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
-          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}-v${{ env.VisualStudioVersion }}"
-        }
+        ${{ matrix.powershell_only }}$QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
+        ${{ matrix.powershell_only }}if ("${{ env.VisualStudioVersion }}") {
+        ${{ matrix.powershell_only }}  echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
+        ${{ matrix.powershell_only }}  $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}-v${{ env.VisualStudioVersion }}"
+        ${{ matrix.powershell_only }}}
+        ${{ matrix.bash_only }}QT_BUILD_TYPE_EXT=${QT_BUILD_TYPE/++/pp} # g++ -> gpp: Avoid '+' in NuGet version
         echo "::set-env name=QT_BUILD_TYPE_EXT::$QT_BUILD_TYPE_EXT"
         echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
 
@@ -108,25 +132,28 @@ jobs:
         ${{ env.MAKE_TOOL }} install
 
     - name: Create NuGet package
-      run: nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
+      run: |
+        ${{ matrix.bash_only }}sudo apt-get install nuget
+        nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
+
+        # Obtain package name
+        ${{ matrix.powershell_only }}$package_name = $(Get-Item *.nupkg).Name
+        ${{ matrix.bash_only }}package_name=$(echo *.nupkg)
+        echo "::set-env name=NUPKG_NAME::$package_name"
 
     - name: Publish NuGet package
       if: github.event.inputs.PUBLISH == 'true'
       run: |
         echo "# Authenticate"
-        dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json -n github -u ${{ github.repository_owner }} -p ${{ secrets.REPO_TOKEN }}
+        # Password encryption is not supported on Linux
+        ${{ matrix.bash_only }}opt=--store-password-in-clear-text
+        dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json -n github -u ${{ github.repository_owner }} -p ${{ secrets.REPO_TOKEN }} $opt
 
         echo "# Publish"
-        dotnet nuget push "*.nupkg" --source "github"
-
-    - name: Obtain NuGet package name
-      if: github.event.inputs.PUBLISH != 'true'
-      run: |
-        $package_name = $(Get-Item *.nupkg).Name
-        echo "::set-env name=NUPKG_NAME::$package_name"
+        dotnet nuget push "${{ env.NUPKG_NAME }}" --source "github"
 
     - uses: actions/upload-artifact@v1
       if: github.event.inputs.PUBLISH != 'true'
       with:
-        name: NuGet-package
+        name: NuGet-package-${{ matrix.os }}
         path: ${{ env.NUPKG_NAME }}
