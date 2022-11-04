@@ -16,14 +16,15 @@ jobs:
     runs-on: windows-latest
 
     env:
-      vcvars_bat: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
+      vcvars_bat: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # Alternative token: ${{ secrets.REPO_TOKEN }}
 
     steps:
     - name: Preprocess Release
-      uses: actions/github-script@0.4.0
+      uses: actions/github-script@v5
       with:
-        github-token: ${{ secrets.REPO_TOKEN }}
+        github-token: ${{ env.GITHUB_TOKEN }}
         script: |
           tag = '${{ env.QTVER }}'.replace(/^refs\/tags\//, '')
           console.log('Get release by tag: ' + tag)
@@ -36,9 +37,10 @@ jobs:
           upload_url = result.data.upload_url
           release_body = result.data.body
 
-          console.log('::set-env name=RELEASE_ID::' + release_id)
+          var fs = require('fs')
+          fs.appendFile(process.env.GITHUB_ENV, 'RELEASE_ID=' + release_id + '\n', (err) => {})
           console.log('RELEASE_ID set to ' + release_id)
-          console.log('::set-env name=ASSET_UPLOAD_URL::' + upload_url)
+          fs.appendFile(process.env.GITHUB_ENV, 'ASSET_UPLOAD_URL=' + upload_url + '\n', (err) => {})
           console.log('ASSET_UPLOAD_URL set to ' + upload_url)
 
           // Update release with a 'pending' badge
@@ -52,14 +54,15 @@ jobs:
 
           return upload_url
 
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v3
       with:
         repository: qt/qt5
         ref: ${{ env.QTVER }}
         #submodules: true
-        path: QT-Build  # ${{ env.GITHUB_WORKSPACE }}
+        path: qt5
 
     - name: Checkout qtbase
+      working-directory: qt5
       run: |
         git submodule update --init qtbase
 
@@ -74,30 +77,32 @@ jobs:
             $n,$v = $s
             # Export new variables only
             if (-not $(Test-Path env:$n) -or $v -ne $(Get-Item env:$n).Value) {
-              echo "::set-env name=$n::$v"
+              echo "$n=$v" >> $env:GITHUB_ENV
             }
           }
         }
         del $tempfile
 
     - name: Configure QT
+      working-directory: qt5
       run: |
-        $deploy_dir = mkdir -Force "$PWD\..\QT"
+        $deploy_dir = mkdir -Force "../QT-deploy"
         echo "Run QT configure to $deploy_dir..."
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
     - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
+      working-directory: qt5
       run: |
         # Translate QTVER
         $QTVER_REF = $(git describe)
-        echo "::set-env name=QTVER_REF::$QTVER_REF"
+        echo "QTVER_REF=$QTVER_REF" >> $env:GITHUB_ENV
         echo "QTVER_REF set to $QTVER_REF"
 
         # Obtain build type (TargetSpec)
         $QT_BUILD_TYPE = ""
         if ( Test-Path ${{ env.QT_CONF }} ) {
           Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
-            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "::set-env name=QT_BUILD_TYPE::$v" }
+            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "QT_BUILD_TYPE=$v" >> $env:GITHUB_ENV }
           }
         }
         echo "QT_BUILD_TYPE set to $QT_BUILD_TYPE"
@@ -108,20 +113,22 @@ jobs:
           echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
           $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}_v${{ env.VisualStudioVersion }}"
         }
-        echo "::set-env name=QT_BUILD_TYPE_EXT::$QT_BUILD_TYPE_EXT"
+        echo "QT_BUILD_TYPE_EXT=$QT_BUILD_TYPE_EXT" >> $env:GITHUB_ENV
         echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
 
         # QT asset name postfix
         $ASSET_POSTFIX = "$QTVER_REF-$QT_BUILD_TYPE_EXT"
-        echo "::set-env name=ASSET_POSTFIX::$ASSET_POSTFIX"
+        echo "ASSET_POSTFIX=$ASSET_POSTFIX" >> $env:GITHUB_ENV
         echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
 
     - name: Make QT
+      working-directory: qt5
       run: |
         echo "Run nmake..."
         nmake
 
     - name: Install QT
+      working-directory: qt5
       run: |
         echo "Run nmake install..."
         nmake install
@@ -129,17 +136,15 @@ jobs:
     - name: ZIP Build Result
       run: |
         Add-Type -assembly "system.io.compression.filesystem"
-        [io.compression.zipfile]::CreateFromDirectory("$PWD\..\QT", "${{ runner.temp }}/QT-asset.zip")
+        [io.compression.zipfile]::CreateFromDirectory("QT-deploy", "${{ runner.temp }}/QT-asset.zip")
         if (! $?) { exit 255 }
 
         Get-Item ${{ runner.temp }}/QT-asset.zip
-        echo "::set-env name=ASSET_READY::true"
+        echo "ASSET_READY=true" >> $env:GITHUB_ENV
 
     - name: Upload Release Asset
-      id: upload-release-asset 
-      uses: actions/upload-release-asset@v1.0.1
-      env:
-        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1.0.2
       with:
         upload_url: ${{ env.ASSET_UPLOAD_URL }}
         asset_path: ${{ runner.temp }}/QT-asset.zip
@@ -147,10 +152,10 @@ jobs:
         asset_content_type: application/zip
 
     - name: Postprocess Release
-      uses: actions/github-script@0.4.0
+      uses: actions/github-script@v6
       if: always()
       with:
-        github-token: ${{ secrets.REPO_TOKEN }}
+        github-token: ${{ env.GITHUB_TOKEN }}
         script: |
           release_id = '${{ env.RELEASE_ID }}'
           console.log('Get release: ' + release_id)
