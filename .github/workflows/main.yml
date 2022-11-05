@@ -150,13 +150,24 @@ jobs:
         echo "ASSET_FILE set to $ASSET_FILE"
 
     - name: Upload Release Asset
-      id: upload-release-asset
-      uses: actions/upload-release-asset@v1.0.2
+      uses: actions/github-script@v6
       with:
-        upload_url: ${{ env.ASSET_UPLOAD_URL }}
-        asset_path: ${{ runner.temp }}/QT-asset.zip
-        asset_name: QT-${{ env.ASSET_POSTFIX }}.zip
-        asset_content_type: application/zip
+        github-token: ${{ env.GITHUB_TOKEN }}
+        script: |
+          const release_id = process.env.RELEASE_ID
+          const assetPath = process.env.ASSET_FILE
+          console.log('Upload asset: ' + assetPath + ', to release: ' + release_id)
+          const fs = require('fs')
+          const uploadAssetResponse = await github.rest.repos.uploadReleaseAsset({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: release_id,
+            name: 'QT-${{ env.ASSET_POSTFIX }}.zip',
+            headers: {'content-type': 'application/zip'},
+            data: fs.readFileSync(assetPath)
+          });
+          const browser_download_url = uploadAssetResponse.data.browserDownloadUrl
+          console.log('browser_download_url is ' + browser_download_url)
 
     - name: Postprocess Release
       uses: actions/github-script@v6
