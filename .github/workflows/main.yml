@@ -16,19 +16,22 @@ jobs:
     runs-on: windows-latest
 
     env:
-      vcvars_bat: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"'
+      vcvars_bat: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat'
       QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # Alternative token: ${{ secrets.REPO_TOKEN }}
+      # Intermediate folders
+      QT_SRC: 'qt'
+      QT_DEPLOY: 'deploy'
 
     steps:
     - name: Preprocess Release
-      uses: actions/github-script@v5
+      uses: actions/github-script@v6
       with:
         github-token: ${{ env.GITHUB_TOKEN }}
         script: |
           tag = '${{ env.QTVER }}'.replace(/^refs\/tags\//, '')
           console.log('Get release by tag: ' + tag)
-          result = await github.repos.getReleaseByTag({
+          result = await github.rest.repos.getReleaseByTag({
             owner: context.repo.owner,
             repo: context.repo.repo,
             tag: tag
@@ -37,14 +40,14 @@ jobs:
           upload_url = result.data.upload_url
           release_body = result.data.body
 
-          var fs = require('fs')
+          const fs = require('fs')
           fs.appendFile(process.env.GITHUB_ENV, 'RELEASE_ID=' + release_id + '\n', (err) => {})
           console.log('RELEASE_ID set to ' + release_id)
           fs.appendFile(process.env.GITHUB_ENV, 'ASSET_UPLOAD_URL=' + upload_url + '\n', (err) => {})
           console.log('ASSET_UPLOAD_URL set to ' + upload_url)
 
           // Update release with a 'pending' badge
-          github.repos.updateRelease({
+          github.rest.repos.updateRelease({
             owner: context.repo.owner,
             repo: context.repo.repo,
             release_id: release_id,
@@ -54,22 +57,24 @@ jobs:
 
           return upload_url
 
-    - uses: actions/checkout@v3
+    - name: Checkout QT
+      uses: actions/checkout@v3
       with:
         repository: qt/qt5
         ref: ${{ env.QTVER }}
         #submodules: true
-        path: qt5
+        path: ${{ env.QT_SRC }}
 
     - name: Checkout qtbase
-      working-directory: qt5
+      working-directory: ${{ env.QT_SRC }}
       run: |
         git submodule update --init qtbase
 
     - name: Prepare MSVS environment
       run: |
+        echo "MSVC environment by: ${{ env.vcvars_bat }}"
         $tempfile = [IO.Path]::GetTempFileName()
-        $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" "/c $env:vcvars_bat 2> nul && set"
+        $proc = start-process -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempfile "$env:ComSpec" '/c "${{ env.vcvars_bat }}" 2> nul && set'
         if ($proc.ExitCode) {exit $proc.ExitCode}
         Get-Content $tempfile | foreach-object {
           $s = $_.Split("=",2)
@@ -78,20 +83,21 @@ jobs:
             # Export new variables only
             if (-not $(Test-Path env:$n) -or $v -ne $(Get-Item env:$n).Value) {
               echo "$n=$v" >> $env:GITHUB_ENV
+              echo "$n set to $v"
             }
           }
         }
         del $tempfile
 
     - name: Configure QT
-      working-directory: qt5
       run: |
-        $deploy_dir = mkdir -Force "../QT-deploy"
+        $deploy_dir = mkdir -Force "${{ env.QT_DEPLOY }}"
         echo "Run QT configure to $deploy_dir..."
+        cd ${{ env.QT_SRC }}
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
     - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
-      working-directory: qt5
+      working-directory: ${{ env.QT_SRC }}
       run: |
         # Translate QTVER
         $QTVER_REF = $(git describe)
@@ -122,13 +128,13 @@ jobs:
         echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
 
     - name: Make QT
-      working-directory: qt5
+      working-directory: ${{ env.QT_SRC }}
       run: |
         echo "Run nmake..."
         nmake
 
     - name: Install QT
-      working-directory: qt5
+      working-directory: ${{ env.QT_SRC }}
       run: |
         echo "Run nmake install..."
         nmake install
@@ -136,11 +142,12 @@ jobs:
     - name: ZIP Build Result
       run: |
         Add-Type -assembly "system.io.compression.filesystem"
-        [io.compression.zipfile]::CreateFromDirectory("QT-deploy", "${{ runner.temp }}/QT-asset.zip")
+        [io.compression.zipfile]::CreateFromDirectory("${{ env.QT_DEPLOY }}", "${{ runner.temp }}/QT-asset.zip")
         if (! $?) { exit 255 }
 
-        Get-Item ${{ runner.temp }}/QT-asset.zip
-        echo "ASSET_READY=true" >> $env:GITHUB_ENV
+        $ASSET_FILE = Get-Item ${{ runner.temp }}/QT-asset.zip
+        echo "ASSET_FILE=$ASSET_FILE" >> $env:GITHUB_ENV
+        echo "ASSET_FILE set to $ASSET_FILE"
 
     - name: Upload Release Asset
       id: upload-release-asset
@@ -157,9 +164,9 @@ jobs:
       with:
         github-token: ${{ env.GITHUB_TOKEN }}
         script: |
-          release_id = '${{ env.RELEASE_ID }}'
+          const release_id = process.env.RELEASE_ID
           console.log('Get release: ' + release_id)
-          result = await github.repos.getRelease({
+          result = await github.rest.repos.getRelease({
             owner: context.repo.owner,
             repo: context.repo.repo,
             release_id: release_id
@@ -169,7 +176,7 @@ jobs:
           prerelease = result.data.prerelease
 
           // Update release with the final badge
-          if ('${{ env.ASSET_READY }}') {
+          if ('${{ env.ASSET_FILE }}') {
             badge = '${{ env.BADGE_PASSED }}'
             prerelease = false
           }
@@ -180,7 +187,7 @@ jobs:
           release_body = release_body.replace('${{ env.BADGE_PENDING }}', badge)
           release_body = release_body +
             '\n* Build of [qt/qt5](https://github.com/qt/qt5) repository, checkout ref `${{ env.QTVER }}`, build type `${{ env.QT_BUILD_TYPE_EXT }}`'
-          github.repos.updateRelease({
+          github.rest.repos.updateRelease({
             owner: context.repo.owner,
             repo: context.repo.repo,
             release_id: release_id,
