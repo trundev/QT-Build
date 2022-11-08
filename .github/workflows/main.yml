@@ -6,7 +6,7 @@ on:
       QT_VERSION:
         description: "QT version"
         required: true
-        default: "5.15.0"
+        default: "v5.15.0"
       COMPILER:
         description: "Build compiler (msvc, gcc)"
         required: false
@@ -25,16 +25,15 @@ on:
         - false
 
 env:
-  QTVER: "v${{ github.event.inputs.QT_VERSION }}"
-  NUPKG_VER: "${{ github.event.inputs.QT_VERSION }}"
+  QTVER: "${{ github.event.inputs.QT_VERSION }}"
   COMPILER: "${{ github.event.inputs.COMPILER }}"
 
 jobs:
   build:
     strategy:
-      fail-fast: false  # Try all matrix entries
       matrix:
         os: [windows-latest, ubuntu-latest]
+      fail-fast: false
 
     runs-on: ${{ matrix.os }}
     env:
@@ -110,48 +109,60 @@ jobs:
         cd ${{ env.QT_SRC }}
         ./configure -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
-    - name: Select QT_BUILD_TYPE and QT_BUILD_TYPE_EXT
+    - name: Make QT
       working-directory: ${{ env.QT_SRC }}
       shell: pwsh
       run: |
-        # Obtain build type (TargetSpec)
-        $QT_BUILD_TYPE = ""
-        if ( Test-Path ${{ env.QT_CONF }} ) {
-          Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
-            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "QT_BUILD_TYPE=$v" >> $env:GITHUB_ENV }
-          }
+        if (Test-Path CMakeLists.txt) {
+          cmake --build . --parallel
+        } else {
+          echo "Run ${{ env.MAKE_TOOL }}..."
+          ${{ env.MAKE_TOOL }}
         }
-        echo "QT_BUILD_TYPE set to $QT_BUILD_TYPE"
-
-        # Append Visual Studio version
-        $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
-        if ("${{ env.VisualStudioVersion }}") {
-          echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
-          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}-v${{ env.VisualStudioVersion }}"
-        }
-        # g++ -> gpp: Avoid '+' in NuGet version
-        $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE_EXT -replace "\+\+", "pp"
-        echo "QT_BUILD_TYPE_EXT=$QT_BUILD_TYPE_EXT" >> $env:GITHUB_ENV
-        echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
-
-    - name: Make QT
-      working-directory: ${{ env.QT_SRC }}
-      run: |
-        echo "Run ${{ env.MAKE_TOOL }}..."
-        ${{ env.MAKE_TOOL }}
 
     - name: Install QT
       working-directory: ${{ env.QT_SRC }}
+      shell: pwsh
       run: |
-        echo "Run ${{ env.MAKE_TOOL }} install..."
-        ${{ env.MAKE_TOOL }} install
+        if (Test-Path CMakeLists.txt) {
+          cmake --install .
+        } else {
+          echo "Run ${{ env.MAKE_TOOL }} install..."
+          ${{ env.MAKE_TOOL }} install
+        }
+
+    - name: Select NUPKG_VER, NUPKG_VER_SUFFIX and NUPKG_ID
+      working-directory: ${{ env.QT_SRC }}
+      shell: pwsh
+      run: |
+        # Translate QTVER
+        $NUPKG_VER = $(git describe).TrimStart("v")
+        echo "NUPKG_VER=$NUPKG_VER" >> $env:GITHUB_ENV
+        echo "NUPKG_VER set to $NUPKG_VER"
+
+        $NUPKG_ID = "QT-${{ runner.os }}"
+        $NUPKG_VER_SUFFIX = ""
+        if ("${{ env.VisualStudioVersion }}") {
+          echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
+        #  $NUPKG_VER_SUFFIX = "${NUPKG_VER_SUFFIX}msvs-v${{ env.VisualStudioVersion }}"
+        }
+
+        echo "NUPKG_ID=$NUPKG_ID" >> $env:GITHUB_ENV
+        echo "NUPKG_ID set to $NUPKG_ID"
+        echo "NUPKG_VER_SUFFIX=$NUPKG_VER_SUFFIX" >> $env:GITHUB_ENV
+        echo "NUPKG_VER_SUFFIX set to $NUPKG_VER_SUFFIX"
 
     - name: Create NuGet package
       shell: pwsh
       run: |
-        Copy-Item ${{ env.QT_SRC }}/${{ env.QT_LICENSE_FILE }} ${{ env.QT_DEPLOY }}
-        nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }} -Suffix ${{ env.QT_BUILD_TYPE_EXT }} `
-            -Properties license=${{ env.QT_LICENSE_FILE }}
+        $PKG_LICENSE_FILE = "${{ env.QT_LICENSE_FILE }}".Replace(".", "_")
+        Copy-Item ${{ env.QT_SRC }}/${{ env.QT_LICENSE_FILE }} ${{ env.QT_DEPLOY }}/$PKG_LICENSE_FILE
+        $SUFFIX = ""
+        if ("${{ env.NUPKG_VER_SUFFIX }}") {$SUFFIX = ("-Suffix", "${{ env.NUPKG_VER_SUFFIX }}")}
+
+        echo "Packing ${{ env.QT_DEPLOY }}, ID ${{ env.NUPKG_ID }}, Version ${{ env.NUPKG_VER }}"
+        nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }} $SUFFIX `
+            -Properties "id=${{ env.NUPKG_ID }};license=$PKG_LICENSE_FILE"
         if ($LASTEXITCODE) {exit $LASTEXITCODE}
 
         # Obtain package name

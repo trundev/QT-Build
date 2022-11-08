@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd">
   <metadata>
-    <id>QT-Build</id>
+    <id>$id$</id>   <!-- To be overriden by "-Properties" option -->
     <version>0.0</version>  <!-- To be overriden by "-Version" option -->
     <description>Prebuilt QT package to be used by GitHub actions</description>
     <authors>qt</authors>
     <repository type="git" url="https://github.com/trundev/QT-Build/" />
     <projectUrl>https://github.com/qt/qt5/</projectUrl>
-    <license type="file">license</license> <!-- To be overriden by "-Properties" option -->
+    <license type="file">$license$</license>  <!-- To be overriden by "-Properties" option -->
   </metadata>
   <files>
     <file src="**"/>    <!-- "-BasePath" must point to the deployment dir -->
