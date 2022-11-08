@@ -44,6 +44,7 @@ jobs:
       # Intermediate folders
       QT_SRC: 'qt'
       QT_DEPLOY: 'deploy'
+      QT_LICENSE_FILE: 'LICENSE.QT-LICENSE-AGREEMENT'
       MAKE_TOOL: make
 
     steps:
@@ -59,7 +60,7 @@ jobs:
           echo "No REPO_TOKEN secret, keep original GITHUB_TOKEN"
         }
 
-    - name: Checkout QT
+    - name: Checkout QT ${{ env.QTVER }}
       uses: actions/checkout@v3
       with:
         repository: qt/qt5
@@ -148,7 +149,9 @@ jobs:
     - name: Create NuGet package
       shell: pwsh
       run: |
-        nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }}-${{ env.QT_BUILD_TYPE_EXT }}
+        Copy-Item ${{ env.QT_SRC }}/${{ env.QT_LICENSE_FILE }} ${{ env.QT_DEPLOY }}
+        nuget pack -BasePath ${{ env.QT_DEPLOY }} -Version ${{ env.NUPKG_VER }} -Suffix ${{ env.QT_BUILD_TYPE_EXT }} `
+            -Properties license=${{ env.QT_LICENSE_FILE }}
         if ($LASTEXITCODE) {exit $LASTEXITCODE}
 
         # Obtain package name
