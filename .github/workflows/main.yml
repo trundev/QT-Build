@@ -17,7 +17,6 @@ jobs:
 
     env:
       vcvars_bat: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat'
-      QT_CONF: 'qtbase/bin/qt.conf' # Extract the QT_BUILD_TYPE from this file
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # Alternative token: ${{ secrets.REPO_TOKEN }}
       # Intermediate folders
       QT_SRC: 'qt'
@@ -96,6 +95,28 @@ jobs:
         cd ${{ env.QT_SRC }}
         .\configure.bat -prefix $deploy_dir -nomake examples -nomake tests -opensource -confirm-license
 
+    - name: Make QT
+      working-directory: ${{ env.QT_SRC }}
+      run: |
+        if (Test-Path CMakeLists.txt) {
+          echo "Run cmake --build..."
+          cmake --build . --parallel
+        } else {
+          echo "Run nmake..."
+          nmake
+        }
+
+    - name: Install QT
+      working-directory: ${{ env.QT_SRC }}
+      run: |
+        if (Test-Path CMakeLists.txt) {
+          echo "Run cmake --install..."
+          cmake --install .
+        } else {
+          echo "Run nmake install..."
+          nmake install
+        }
+
     - name: Select QTVER_REF, QT_BUILD_TYPE/QT_BUILD_TYPE_EXT and ASSET_POSTFIX
       working-directory: ${{ env.QT_SRC }}
       run: |
@@ -105,19 +126,15 @@ jobs:
         echo "QTVER_REF set to $QTVER_REF"
 
         # Obtain build type (TargetSpec)
-        $QT_BUILD_TYPE = ""
-        if ( Test-Path ${{ env.QT_CONF }} ) {
-          Get-Content ${{ env.QT_CONF }} | foreach-object { $n,$v = $_.Split("=", 2)
-            if ($n -eq "TargetSpec") { $QT_BUILD_TYPE = $v; echo "QT_BUILD_TYPE=$v" >> $env:GITHUB_ENV }
-          }
-        }
+        $QT_BUILD_TYPE = "${{ runner.os }}"
+        echo "QT_BUILD_TYPE=$QT_BUILD_TYPE" >> $env:GITHUB_ENV
         echo "QT_BUILD_TYPE set to $QT_BUILD_TYPE"
 
         # Append Visual Studio version
         $QT_BUILD_TYPE_EXT = $QT_BUILD_TYPE
         if ("${{ env.VisualStudioVersion }}") {
           echo "  VisualStudioVersion is ${{ env.VisualStudioVersion }}"
-          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}_v${{ env.VisualStudioVersion }}"
+          $QT_BUILD_TYPE_EXT = "${QT_BUILD_TYPE_EXT}-msvs_v${{ env.VisualStudioVersion }}"
         }
         echo "QT_BUILD_TYPE_EXT=$QT_BUILD_TYPE_EXT" >> $env:GITHUB_ENV
         echo "QT_BUILD_TYPE_EXT set to $QT_BUILD_TYPE_EXT"
@@ -126,18 +143,6 @@ jobs:
         $ASSET_POSTFIX = "$QTVER_REF-$QT_BUILD_TYPE_EXT"
         echo "ASSET_POSTFIX=$ASSET_POSTFIX" >> $env:GITHUB_ENV
         echo "ASSET_POSTFIX set to $ASSET_POSTFIX"
-
-    - name: Make QT
-      working-directory: ${{ env.QT_SRC }}
-      run: |
-        echo "Run nmake..."
-        nmake
-
-    - name: Install QT
-      working-directory: ${{ env.QT_SRC }}
-      run: |
-        echo "Run nmake install..."
-        nmake install
 
     - name: ZIP Build Result
       run: |
